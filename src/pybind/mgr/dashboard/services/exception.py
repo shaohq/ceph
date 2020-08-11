@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import json
 from contextlib import contextmanager
 import logging
+import traceback
 
 import cherrypy
 
@@ -18,7 +19,7 @@ from ..exceptions import ViewCacheNoDataException, DashboardException
 logger = logging.getLogger('exception')
 
 
-def serialize_dashboard_exception(e, include_http_status=False, task=None):
+def serialize_dashboard_exception(e, include_http_status=False, task=None, exc_traceback=None):
     """
     :type e: Exception
     :param include_http_status: Used for Tasks, where the HTTP status code is not available.
@@ -29,6 +30,8 @@ def serialize_dashboard_exception(e, include_http_status=False, task=None):
 
     out = dict(detail=str(e))
     try:
+        if exc_traceback:
+            out['detail'] = '{}\n{}'.format(out['detail'], exc_traceback)
         out['code'] = e.code
     except AttributeError:
         pass
@@ -41,6 +44,7 @@ def serialize_dashboard_exception(e, include_http_status=False, task=None):
     return out
 
 
+# pylint: disable=broad-except
 def dashboard_exception_handler(handler, *args, **kwargs):
     try:
         with handle_rados_error(component=None):  # make the None controller the fallback.
@@ -51,6 +55,13 @@ def dashboard_exception_handler(handler, *args, **kwargs):
         cherrypy.response.headers['Content-Type'] = 'application/json'
         cherrypy.response.status = getattr(e, 'status', 400)
         return json.dumps(serialize_dashboard_exception(e)).encode('utf-8')
+    except Exception as exc:
+        logger.exception('Internal Server Error')
+        cherrypy.response.headers['Content-Type'] = 'application/json'
+        cherrypy.response.status = getattr(exc, 'status', 500)
+        return json.dumps(serialize_dashboard_exception(exc,
+                                                        exc_traceback=traceback.format_exc())
+                          ).encode('utf-8')
 
 
 @contextmanager
